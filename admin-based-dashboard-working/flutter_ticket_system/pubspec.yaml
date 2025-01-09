@@ -1,0 +1,16 @@
+name: my_project
+description: Un sistema de tickets en Flutter.
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  shared_preferences: ^2.0.15
+  # Otras dependencias importantes
+
+dev_dependencies:
+  flutter_lints: ^2.0.0
