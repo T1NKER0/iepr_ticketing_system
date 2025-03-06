@@ -1,0 +1,275 @@
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+
+class FullTicketScreen extends StatefulWidget {
+  @override
+  _FullTicketScreenState createState() => _FullTicketScreenState();
+}
+
+class _FullTicketScreenState extends State<FullTicketScreen> {
+  int? id; // Nullable to avoid issues
+  bool _isLoading = true;
+  Map<String, dynamic> _ticketDetails = {};
+  String? _userRole; // Store user role
+  List<Map<String, dynamic>> _admins = []; // Store list of admin data (id, name)
+  String? _selectedUser; // Store selected admin name
+  int? _selectedUserId; // Store selected admin ID
+
+  // Verifies if the user is authorized
+  Future<bool> _isAuthorized() async {
+    final prefs = await SharedPreferences.getInstance();
+    final tokenExists = prefs.containsKey('token');
+    final permission = prefs.getString('permission');
+
+    if (permission != 'main' && permission != 'top') {
+      await prefs.clear();
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/');
+      }
+      return false;
+    }
+
+    _userRole = permission; // Save the user role
+    return tokenExists;
+  }
+
+  // Fetches the ticket details from the API
+  Future<void> _fetchTicketDetails() async {
+    if (id == null) {
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+
+    try {
+      final response = await http.get(
+        Uri.parse('http://localhost:3000/request/$id'), // Use $id to pass the correct ticket ID
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        setState(() {
+          _ticketDetails = data['request'] ?? {};
+        });
+      } else {
+        throw Exception('Error fetching ticket');
+      }
+    } catch (e) {
+      print('API Error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al obtener los detalles del ticket.')),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  // Fetches the admins from the API
+  Future<void> _fetchAdmins() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+
+    try {
+      final response = await http.get(
+        Uri.parse('http://localhost:3000/admins'), // Correct endpoint to get admins
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      print('Admin Response: ${response.body}');  // Log the response body
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        // Check if the 'admins' key exists and is a valid list
+        if (data != null && data['admins'] != null) {
+          final admins = data['admins'] as List;
+          setState(() {
+            _admins = admins.map((admin) {
+              return {
+                'id': admin['user_id'],  // Correctly map to 'user_id'
+                'name': admin['name'],    // Correctly map to 'name'
+              };
+            }).toList();
+          });
+        } else {
+          print('Error: "admins" key not found or is not a List');
+          setState(() {
+            _admins = [];
+          });
+        }
+      } else {
+        throw Exception('Error fetching admins');
+      }
+    } catch (e) {
+      print('API Error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al obtener los admins.')),
+      );
+      setState(() {
+        _admins = [];
+      });
+    }
+  }
+
+  // Assign the ticket to the selected admin
+  Future<void> _assignTicket() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+
+    if (_selectedUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Por favor, seleccione un admin para asignar.')),
+      );
+      return;
+    }
+
+    if (id == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('ID de ticket no válido.')),
+      );
+      return;
+    }
+
+    final response = await http.post(
+      Uri.parse('http://localhost:3000/assign-ticket'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: json.encode({
+        'ticketId': id, // Pass the ticket ID
+        'userId': _selectedUserId, // Pass the admin ID
+      }),
+    );
+
+    print('Assign Response: ${response.body}');  // Log the response body
+
+    if (response.statusCode == 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ticket asignado correctamente.')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al asignar el ticket.')),
+      );
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Get ticket ID passed as argument
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args != null && args is int) {
+      id = args;
+      _fetchTicketDetails();
+      _fetchAdmins(); // Fetch admins when ticket details are loaded
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _isAuthorized(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (!snapshot.hasData || !snapshot.data!) {
+          Future.microtask(() => Navigator.pushReplacementNamed(context, '/home-dashboard'));
+          return SizedBox.shrink();
+        }
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Text("Detalles del Ticket", style: TextStyle(color: Colors.white)),
+            backgroundColor: const Color.fromARGB(255, 152, 230, 88),
+          ),
+          body: _isLoading
+              ? Center(child: CircularProgressIndicator())
+              : SingleChildScrollView(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_ticketDetails.isNotEmpty) ...[
+                          Text("Asunto: ${_ticketDetails['title'] ?? 'N/A'}", style: TextStyle(fontSize: 20)),
+                          SizedBox(height: 10),
+                          Text("Descripción: ${_ticketDetails['description'] ?? 'N/A'}", style: TextStyle(fontSize: 16)),
+                          SizedBox(height: 10),
+                          Text("Origen: ${_ticketDetails['username'] ?? 'N/A'}", style: TextStyle(fontSize: 16)),
+                          SizedBox(height: 10),
+                          Text("Urgencia: ${_ticketDetails['priority'] ?? 'N/A'}", style: TextStyle(fontSize: 16)),
+                          SizedBox(height: 10),
+                          Text("Estado: ${_ticketDetails['status'] ?? 'N/A'}", style: TextStyle(fontSize: 16)),
+                          SizedBox(height: 20),
+
+                          // Dropdown for admin selection
+                          if (_userRole == 'top' && _admins.isNotEmpty)
+                            DropdownButton<String>(
+                              value: _selectedUser ?? (_admins.isNotEmpty ? _admins.first['name'] : null),
+                              hint: Text("Seleccione un admin"),
+                              onChanged: (String? newValue) {
+                                setState(() {
+                                  _selectedUser = newValue;
+                                  // Find the selected admin ID
+                                  final selectedAdmin = _admins.firstWhere(
+                                    (admin) => admin['name'] == _selectedUser,
+                                    orElse: () => {},
+                                  );
+                                  if (selectedAdmin.isNotEmpty) {
+                                    _selectedUserId = selectedAdmin['id'];
+                                  }
+                                });
+                              },
+                              items: _admins.map((admin) {
+                                return DropdownMenuItem<String>(
+                                  value: admin['name'],
+                                  child: Text(admin['name']),
+                                );
+                              }).toList(),
+                            ),
+
+                          // Button to assign the ticket
+                          if (_userRole == 'top') ...[
+                            SizedBox(height: 20),
+                            ElevatedButton(
+                              onPressed: _assignTicket,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                              ),
+                              child: Text(
+                                "Asignar Ticket",
+                                style: TextStyle(fontSize: 16, color: Colors.white),
+                              ),
+                            ),
+                          ],
+                        ] else
+                          Text("No se encontraron detalles para este ticket."),
+                      ],
+                    ),
+                  ),
+                ),
+        );
+      },
+    );
+  }
+}
