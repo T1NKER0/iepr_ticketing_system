@@ -25,7 +25,7 @@ class AuthService {
   bool? get loginFirst => _loginFirst; // Getter for first login flag
   String? get email => _email; // Getter for the email
 
-  final String _baseUrl = 'http://localhost:3000'; 
+  final String _baseUrl = 'http://192.168.1.171:3000'; 
 
   Future<bool> login(String email, String password, context) async {
     try {
